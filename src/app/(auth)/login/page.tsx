@@ -4,6 +4,7 @@
 import { useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useApi } from "@/lib/api";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,12 +12,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Loader2, Command } from "lucide-react";
 
 export default function LoginPage() {
-     const { login } = useAuth();
+     const { login, user, loading: authLoading } = useAuth();
      const api = useApi();
      const [loading, setLoading] = useState(false);
      const [email, setEmail] = useState("");
      const [password, setPassword] = useState("");
      const [error, setError] = useState("");
+     const router = useRouter();
+
+     // If already authenticated, redirect to dashboard
+     if (!authLoading && user) {
+          console.log("LOGIN PAGE: User already authenticated, redirecting to /");
+          router.push("/");
+     }
 
      const handleLogin = async (e: React.FormEvent) => {
           e.preventDefault();

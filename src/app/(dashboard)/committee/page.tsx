@@ -2,25 +2,48 @@
 "use client";
 
 import { useApi } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Shield, Plus } from "lucide-react";
+import { Shield, Plus, MoreHorizontal, Edit, Trash2, UserPlus, Undo2, XCircle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+     DropdownMenu,
+     DropdownMenuContent,
+     DropdownMenuItem,
+     DropdownMenuLabel,
+     DropdownMenuSeparator,
+     DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 export default function CommitteePage() {
      const api = useApi();
+     const { user: currentUser } = useAuth();
      const [isAddOpen, setIsAddOpen] = useState(false);
      const [searchQuery, setSearchQuery] = useState("");
      const [searchResults, setSearchResults] = useState<any[]>([]);
+     const [showDeleted, setShowDeleted] = useState(false);
 
      // Password Dialog State
      const [isPasswordOpen, setIsPasswordOpen] = useState(false);
      const [selectedUser, setSelectedUser] = useState<any>(null);
      const [password, setPassword] = useState("");
+
+     // Action Dialog State (Delete, Permanent, Restore, Demote)
+     const [actionDialog, setActionDialog] = useState<{ isOpen: boolean; type: 'delete' | 'permanent' | 'restore' | 'demote'; data: any }>({
+          isOpen: false,
+          type: 'delete',
+          data: null
+     });
 
      const { data: users, isLoading, refetch } = useQuery({
           queryKey: ['committee-users'],
@@ -83,116 +106,236 @@ export default function CommitteePage() {
           );
      };
 
-     if (isLoading) return <div>Memuat...</div>;
+     const handleRestore = async (id: string) => {
+          toast.promise(
+               async () => {
+                    await api.post(`/students/${id}/restore`); // Reusing student endpoint as it targets the same 'users' table
+                    refetch();
+               },
+               {
+                    loading: 'Memulihkan pengguna...',
+                    success: 'Pengguna berhasil dipulihkan',
+                    error: 'Gagal memulihkan pengguna'
+               }
+          );
+     };
+
+     const handlePermanentDelete = async (id: string) => {
+          if (!confirm("PERINGATAN: Tindakan ini permanen dan tidak dapat dibatalkan. Apakah Anda yakin?")) return;
+          toast.promise(
+               async () => {
+                    await api.delete(`/students/${id}/permanent`);
+                    refetch();
+               },
+               {
+                    loading: 'Menghapus permanen...',
+                    success: 'Pengguna dihapus permanen',
+                    error: 'Gagal menghapus permanen'
+               }
+          );
+     };
+
+     const handleSoftDelete = async (id: string) => {
+          // Reusing demote logic or actual delete logic. Assuming demote for now based on previous code usually just removing role, 
+          // but if "delete" means soft delete the user entirely:
+          toast.promise(
+               async () => {
+                    await api.delete(`/students/${id}`); // Assuming /students/:id delete endpoint works for soft delete
+                    refetch();
+               },
+               {
+                    loading: 'Menghapus pengguna...',
+                    success: 'Pengguna berhasil dihapus',
+                    error: 'Gagal menghapus pengguna'
+               }
+          );
+     };
+
+     const handleEdit = (user: any) => {
+          // Placeholder for edit functionality
+          setSelectedUser(user);
+          // Could open edit dialog if implemented
+          toast.info("Edit fitur belum tersedia, gunakan hapus/tambah untuk saat ini.");
+     };
+
+     const handleCreate = () => {
+          setIsAddOpen(true);
+          setSearchQuery("");
+          setSearchResults([]);
+     };
+
+     const filteredUsers = users?.filter((u: any) => showDeleted || !u.deletedAt) || [];
 
      return (
           <div className="space-y-6">
                <div className="flex items-center justify-between">
                     <div>
                          <h2 className="text-3xl font-bold tracking-tight">Panitia</h2>
-                         <p className="text-muted-foreground text-sm">Kelola hak akses Panitia dan Admin.</p>
+                         <p className="text-muted-foreground text-sm">Kelola akun panitia dan hak akses sistem.</p>
                     </div>
-
-                    <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-                         <DialogTrigger asChild>
-                              <Button className="gap-2">
-                                   <Plus className="h-4 w-4" />
-                                   Tambah Anggota
-                              </Button>
-                         </DialogTrigger>
-                         <DialogContent>
-                              <DialogHeader>
-                                   <DialogTitle>Tambah Anggota Panitia</DialogTitle>
-                              </DialogHeader>
-                              <div className="space-y-4">
-                                   <div className="flex gap-2">
-                                        <Input
-                                             placeholder="Cari mahasiswa (NIM/Nama)..."
-                                             value={searchQuery}
-                                             onChange={(e) => setSearchQuery(e.target.value)}
-                                        />
-                                        <Button onClick={handleSearch}>Cari</Button>
-                                   </div>
-                                   <div className="space-y-2">
-                                        {searchResults.map((s: any) => (
-                                             <div key={s.id} className="flex justify-between items-center border p-2 rounded">
-                                                  <div>
-                                                       <div className="font-bold">{s.name}</div>
-                                                       <div className="text-xs text-muted-foreground">{s.nim}</div>
-                                                  </div>
-                                                  <Button size="sm" onClick={() => handlePromoteClick(s)}>Angkat Panitia</Button>
-                                             </div>
-                                        ))}
-                                        {searchResults.length === 0 && searchQuery && <p className="text-sm text-muted-foreground">Tidak ditemukan.</p>}
-                                   </div>
-                              </div>
-                         </DialogContent>
-                    </Dialog>
-
-                    {/* Password Confirmation Dialog */}
-                    <Dialog open={isPasswordOpen} onOpenChange={setIsPasswordOpen}>
-                         <DialogContent>
-                              <DialogHeader>
-                                   <DialogTitle>Atur Password Panitia</DialogTitle>
-                              </DialogHeader>
-                              <div className="space-y-4 py-2">
-                                   <p className="text-sm text-muted-foreground">
-                                        Untuk keamanan, silakan atur password baru untuk <strong>{selectedUser?.name}</strong> agar dapat login ke dashboard admin.
-                                   </p>
-                                   <div className="space-y-2">
-                                        <label htmlFor="pass" className="text-sm font-medium">Password Baru</label>
-                                        <Input
-                                             id="pass"
-                                             type="password"
-                                             placeholder="Masukkan password..."
-                                             value={password}
-                                             onChange={(e) => setPassword(e.target.value)}
-                                        />
-                                   </div>
-                                   <div className="flex justify-end gap-2">
-                                        <Button variant="outline" onClick={() => setIsPasswordOpen(false)}>Batal</Button>
-                                        <Button onClick={handleConfirmPromote} disabled={!password}>
-                                             Konfirmasi & Simpan
-                                        </Button>
-                                   </div>
-                              </div>
-                         </DialogContent>
-                    </Dialog>
+                    <Button onClick={handleCreate}>
+                         <UserPlus className="mr-2 h-4 w-4" /> Tambah Panitia
+                    </Button>
                </div>
 
-               <div className="border rounded-lg bg-card text-card-foreground shadow-sm">
+               <div className="flex items-center space-x-2">
+                    <Switch
+                         id="show-deleted"
+                         checked={showDeleted}
+                         onCheckedChange={setShowDeleted}
+                    />
+                    <Label htmlFor="show-deleted">Tampilkan Dihapus</Label>
+               </div>
+
+               <div className="border rounded-lg bg-card">
                     <Table>
                          <TableHeader>
                               <TableRow>
-                                   <TableHead>Nama/ID</TableHead>
+                                   <TableHead>Nama</TableHead>
                                    <TableHead>Email</TableHead>
-                                   <TableHead>Peran (Role)</TableHead>
+                                   <TableHead>Role</TableHead>
                                    <TableHead className="text-right">Aksi</TableHead>
                               </TableRow>
                          </TableHeader>
                          <TableBody>
-                              {users?.map((member: any) => (
-                                   <TableRow key={member.id}>
-                                        <TableCell className="font-medium">{member.name || member.id}</TableCell>
-                                        <TableCell>{member.email}</TableCell>
-                                        <TableCell>{member.role}</TableCell>
-                                        <TableCell className="text-right">
-                                             <div className="flex items-center justify-end gap-2">
-                                                  <Button variant="ghost" size="icon">
-                                                       <Shield className="h-4 w-4" />
-                                                  </Button>
-                                                  {member.role !== 'super_admin' && (
-                                                       <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDemote(member.id)}>
-                                                            Hapus
-                                                       </Button>
-                                                  )}
-                                             </div>
-                                        </TableCell>
-                                   </TableRow>
-                              ))}
+                              {isLoading ? (
+                                   Array.from({ length: 5 }).map((_, i) => (
+                                        <TableRow key={i}>
+                                             <TableCell><Skeleton className="h-4 w-[150px]" /></TableCell>
+                                             <TableCell><Skeleton className="h-4 w-[200px]" /></TableCell>
+                                             <TableCell><Skeleton className="h-4 w-[100px]" /></TableCell>
+                                             <TableCell className="text-right"><Skeleton className="h-8 w-8 rounded-md ml-auto" /></TableCell>
+                                        </TableRow>
+                                   ))
+                              ) : (
+                                   filteredUsers.map((user: any) => {
+                                        const isDeleted = !!user.deletedAt;
+                                        return (
+                                             <TableRow key={user.id} className={isDeleted ? "opacity-50 bg-destructive/5 hover:bg-destructive/10" : ""}>
+                                                  <TableCell className="font-medium">
+                                                       {user.name}
+                                                       {isDeleted && <span className="ml-2 text-[10px] text-destructive border border-destructive px-1 rounded">DELETED</span>}
+                                                  </TableCell>
+                                                  <TableCell>{user.email}</TableCell>
+                                                  <TableCell>
+                                                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${user.role === 'super_admin'
+                                                            ? "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400"
+                                                            : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+                                                            }`}>
+                                                            {user.role === 'super_admin' ? 'Super Admin' : 'Panitia'}
+                                                       </span>
+                                                  </TableCell>
+                                                  <TableCell className="text-right">
+
+                                                       <DropdownMenu>
+                                                            <DropdownMenuTrigger asChild>
+                                                                 <Button variant="ghost" className="h-8 w-8 p-0">
+                                                                      <span className="sr-only">Open menu</span>
+                                                                      <MoreHorizontal className="h-4 w-4" />
+                                                                 </Button>
+                                                            </DropdownMenuTrigger>
+                                                            <DropdownMenuContent align="end">
+                                                                 <DropdownMenuLabel>Aksi</DropdownMenuLabel>
+
+                                                                 {!isDeleted && (
+                                                                      <>
+                                                                           <DropdownMenuItem onClick={() => handleEdit(user)}>
+                                                                                <Edit className="mr-2 h-4 w-4" /> Edit
+                                                                           </DropdownMenuItem>
+                                                                           <DropdownMenuSeparator />
+                                                                           {user.role !== 'super_admin' && ( // Prevent deleting super admin easily or restrict via backend
+                                                                                <DropdownMenuItem className="text-red-600" onClick={() => handleDemote(user.id)}>
+                                                                                     <Shield className="mr-2 h-4 w-4" /> Demosi ke Voter
+                                                                                </DropdownMenuItem>
+                                                                           )}
+                                                                           <DropdownMenuItem className="text-red-600" onClick={() => handleSoftDelete(user.id)}>
+                                                                                <Trash2 className="mr-2 h-4 w-4" /> Hapus (Soft)
+                                                                           </DropdownMenuItem>
+                                                                      </>
+                                                                 )}
+
+                                                                 {isDeleted && (
+                                                                      <>
+                                                                           <DropdownMenuItem className="text-blue-600" onClick={() => handleRestore(user.id)}>
+                                                                                <Undo2 className="mr-2 h-4 w-4" /> Pulihkan
+                                                                           </DropdownMenuItem>
+                                                                           <DropdownMenuItem className="text-red-600" onClick={() => handlePermanentDelete(user.id)}>
+                                                                                <XCircle className="mr-2 h-4 w-4" /> Hapus Permanen
+                                                                           </DropdownMenuItem>
+                                                                      </>
+                                                                 )}
+                                                            </DropdownMenuContent>
+                                                       </DropdownMenu>
+
+                                                  </TableCell>
+                                             </TableRow>
+                                        );
+                                   })
+                              )}
                          </TableBody>
                     </Table>
                </div>
+
+               {/* Add Member Dialog */}
+               <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+                    <DialogContent>
+                         <DialogHeader>
+                              <DialogTitle>Tambah Anggota Panitia</DialogTitle>
+                         </DialogHeader>
+                         <div className="space-y-4">
+                              <div className="flex gap-2">
+                                   <Input
+                                        placeholder="Cari mahasiswa (NIM/Nama)..."
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                   />
+                                   <Button onClick={handleSearch}>Cari</Button>
+                              </div>
+                              <div className="space-y-2">
+                                   {searchResults.map((s: any) => (
+                                        <div key={s.id} className="flex justify-between items-center border p-2 rounded">
+                                             <div>
+                                                  <div className="font-bold">{s.name}</div>
+                                                  <div className="text-xs text-muted-foreground">{s.nim}</div>
+                                             </div>
+                                             <Button size="sm" onClick={() => handlePromoteClick(s)}>Angkat Panitia</Button>
+                                        </div>
+                                   ))}
+                                   {searchResults.length === 0 && searchQuery && <p className="text-sm text-muted-foreground">Tidak ditemukan.</p>}
+                              </div>
+                         </div>
+                    </DialogContent>
+               </Dialog>
+
+               {/* Password Confirmation Dialog */}
+               <Dialog open={isPasswordOpen} onOpenChange={setIsPasswordOpen}>
+                    <DialogContent>
+                         <DialogHeader>
+                              <DialogTitle>Atur Password Panitia</DialogTitle>
+                         </DialogHeader>
+                         <div className="space-y-4 py-2">
+                              <p className="text-sm text-muted-foreground">
+                                   Untuk keamanan, silakan atur password baru untuk <strong>{selectedUser?.name}</strong> agar dapat login ke dashboard admin.
+                              </p>
+                              <div className="space-y-2">
+                                   <label htmlFor="pass" className="text-sm font-medium">Password Baru</label>
+                                   <Input
+                                        id="pass"
+                                        type="password"
+                                        placeholder="Masukkan password..."
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                   />
+                              </div>
+                              <div className="flex justify-end gap-2">
+                                   <Button variant="outline" onClick={() => setIsPasswordOpen(false)}>Batal</Button>
+                                   <Button onClick={handleConfirmPromote} disabled={!password}>
+                                        Konfirmasi & Simpan
+                                   </Button>
+                              </div>
+                         </div>
+                    </DialogContent>
+               </Dialog>
           </div>
      );
 }

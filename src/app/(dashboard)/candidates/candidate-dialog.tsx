@@ -3,18 +3,21 @@
 
 import { useApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "../../../components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 
-export function CandidateDialog({ open, onOpenChange, candidate, onSuccess }: any) {
+export function CandidateDialog({ children, candidate, onSuccess }: { children: React.ReactNode; candidate?: any; onSuccess: () => void }) {
      const api = useApi();
+     const [open, setOpen] = useState(false);
      const [loading, setLoading] = useState(false);
 
      // Form States
-     const [name, setName] = useState("");
+     const [chairmanName, setChairmanName] = useState("");
+     const [viceChairmanName, setViceChairmanName] = useState("");
      const [orderNumber, setOrderNumber] = useState("");
      const [vision, setVision] = useState("");
      const [mission, setMission] = useState("");
@@ -23,14 +26,17 @@ export function CandidateDialog({ open, onOpenChange, candidate, onSuccess }: an
      // Populate form on edit
      useEffect(() => {
           if (candidate) {
-               setName(candidate.name);
+               const [cName, vName] = candidate.name.split(" & ");
+               setChairmanName(cName || candidate.name);
+               setViceChairmanName(vName || "");
                setOrderNumber(String(candidate.orderNumber));
                setVision(candidate.vision || "");
                setMission(candidate.mission || "");
                setPhotoUrl(candidate.photoUrl || "");
           } else {
                // Reset
-               setName("");
+               setChairmanName("");
+               setViceChairmanName("");
                setOrderNumber("");
                setVision("");
                setMission("");
@@ -42,8 +48,10 @@ export function CandidateDialog({ open, onOpenChange, candidate, onSuccess }: an
           e.preventDefault();
           setLoading(true);
 
+          const fullName = viceChairmanName ? `${chairmanName} & ${viceChairmanName}` : chairmanName;
+
           const payload = {
-               name,
+               name: fullName,
                orderNumber: Number(orderNumber),
                vision,
                mission,
@@ -58,7 +66,7 @@ export function CandidateDialog({ open, onOpenChange, candidate, onSuccess }: an
                     // Create
                     await api.post('/candidates', payload);
                }
-               onOpenChange(false);
+               setOpen(false);
                onSuccess();
           } catch (error) {
                console.error(error);
@@ -69,8 +77,11 @@ export function CandidateDialog({ open, onOpenChange, candidate, onSuccess }: an
      };
 
      return (
-          <Dialog open={open} onOpenChange={onOpenChange}>
-               <DialogContent className="sm:max-w-md">
+          <Dialog open={open} onOpenChange={setOpen}>
+               <DialogTrigger asChild>
+                    {children}
+               </DialogTrigger>
+               <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                          <DialogTitle>{candidate ? "Edit Kandidat" : "Tambah Kandidat"}</DialogTitle>
                          <DialogDescription>
@@ -80,11 +91,17 @@ export function CandidateDialog({ open, onOpenChange, candidate, onSuccess }: an
                     <form onSubmit={handleSubmit} className="grid gap-4 py-4">
                          <div className="grid gap-2">
                               <Label htmlFor="order">Nomor Urut</Label>
-                              <Input id="order" type="number" value={orderNumber} onChange={e => setOrderNumber(e.target.value)} required />
+                              <Input id="order" type="number" value={orderNumber} onChange={e => setOrderNumber(e.target.value)} required placeholder="Contoh: 1" />
                          </div>
-                         <div className="grid gap-2">
-                              <Label htmlFor="name">Nama</Label>
-                              <Input id="name" value={name} onChange={e => setName(e.target.value)} required />
+                         <div className="grid grid-cols-2 gap-4">
+                              <div className="grid gap-2">
+                                   <Label htmlFor="chairman">Nama Ketua</Label>
+                                   <Input id="chairman" value={chairmanName} onChange={e => setChairmanName(e.target.value)} required placeholder="Nama Ketua..." />
+                              </div>
+                              <div className="grid gap-2">
+                                   <Label htmlFor="vice">Nama Wakil</Label>
+                                   <Input id="vice" value={viceChairmanName} onChange={e => setViceChairmanName(e.target.value)} required placeholder="Nama Wakil..." />
+                              </div>
                          </div>
                          <div className="grid gap-2">
                               <Label htmlFor="photo">URL Foto</Label>
@@ -92,11 +109,11 @@ export function CandidateDialog({ open, onOpenChange, candidate, onSuccess }: an
                          </div>
                          <div className="grid gap-2">
                               <Label htmlFor="vision">Visi</Label>
-                              <Input id="vision" value={vision} onChange={e => setVision(e.target.value)} />
+                              <Textarea id="vision" value={vision} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setVision(e.target.value)} placeholder="Visi kandidat..." />
                          </div>
                          <div className="grid gap-2">
-                              <Label htmlFor="mission">Misi</Label>
-                              <Input id="mission" value={mission} onChange={e => setMission(e.target.value)} />
+                              <Label htmlFor="mission">Misi (Pisahkan dengan baris baru untuk poin-poin)</Label>
+                              <Textarea id="mission" value={mission} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setMission(e.target.value)} rows={5} placeholder="1. Misi pertama&#10;2. Misi kedua&#10;..." />
                          </div>
                          <DialogFooter>
                               <Button type="submit" disabled={loading}>

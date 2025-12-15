@@ -1,38 +1,93 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { FileUp, Search, RefreshCw, Mail, CheckCircle2, Trash2 } from "lucide-react";
+import { FileUp, Search, RefreshCw, Mail, CheckCircle2, Trash2, Undo2, XCircle, Plus } from "lucide-react";
 import { ImportModal } from "./import-modal";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+     AlertDialog,
+     AlertDialogAction,
+     AlertDialogCancel,
+     AlertDialogContent,
+     AlertDialogDescription,
+     AlertDialogFooter,
+     AlertDialogHeader,
+     AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
 
 export default function StudentsPage() {
      const [search, setSearch] = useState("");
      const [isImportOpen, setIsImportOpen] = useState(false);
+     const [isAddOpen, setIsAddOpen] = useState(false);
+     const [showDeleted, setShowDeleted] = useState(false);
      const api = useApi();
      const { user } = useAuth();
 
+     // OTP Confirmation & Cooldown State
+     const [otpConfirmOpen, setOtpConfirmOpen] = useState(false);
+     const [selectedStudentForOtp, setSelectedStudentForOtp] = useState<any>(null);
+     const [cooldowns, setCooldowns] = useState<Record<string, number>>({});
+     const [now, setNow] = useState(() => Date.now());
+
+     // Action Dialog State (Delete, Permanent, Restore)
+     const [actionDialog, setActionDialog] = useState<{ isOpen: boolean; type: 'delete' | 'permanent' | 'restore'; data: any }>({
+          isOpen: false,
+          type: 'delete',
+          data: null
+     });
+
+     // Add Student State
+     const [newStudent, setNewStudent] = useState({ nim: "", name: "", email: "" });
+
+     // Tick for cooldown timer
+     useEffect(() => {
+          const interval = setInterval(() => setNow(Date.now()), 1000);
+          return () => clearInterval(interval);
+     }, []);
+
      // React Query for Students
      const { data, isLoading, refetch } = useQuery({
-          queryKey: ['students', search],
+          queryKey: ['students', search, showDeleted],
           queryFn: async () => {
-               const res = await api.get(`/students?search=${search}`);
+               const res = await api.get(`/students?search=${search}&includeDeleted=${showDeleted}`);
                return res.data;
           }
      });
 
-     const handleResendOtp = async (nim: string) => {
+     const handleResendOtpClick = (student: any) => {
+          setSelectedStudentForOtp(student);
+          setOtpConfirmOpen(true);
+     };
+
+     const confirmResendOtp = async () => {
+          if (!selectedStudentForOtp) return;
+          const nim = selectedStudentForOtp.nim;
+
+          setOtpConfirmOpen(false);
+
           toast.promise(api.post('/auth/manual-otp', { identifier: nim }), {
                loading: 'Mengirim OTP...',
-               success: 'OTP berhasil dikirim!',
+               success: () => {
+                    // Set cooldown for 60 seconds
+                    setCooldowns(prev => ({ ...prev, [nim]: Date.now() + 60000 }));
+                    return 'OTP berhasil dikirim!';
+               },
                error: (err) => `Gagal pengiriman: ${err.response?.data?.message || "Unknown error"}`,
           });
+
+          setSelectedStudentForOtp(null);
      };
 
      const handleMarkAttendance = async (nim: string) => {
@@ -49,24 +104,95 @@ export default function StudentsPage() {
           );
      };
 
-     const handleDeleteStudent = async (id: string, name: string) => {
-          if (!confirm(`Apakah Anda yakin ingin menghapus data mahasiswa "${name}"? Data ini masih bisa dipulihkan oleh administrator database (Soft Delete).`)) return;
+     // Manual Add Student
+     const handleAddStudent = async () => {
+          if (!newStudent.nim || !newStudent.name) {
+               toast.error("NIM dan Nama wajib diisi");
+               return;
+          }
 
           toast.promise(
                async () => {
-                    await api.delete(`/students/${id}`);
+                    await api.post('/students', newStudent);
+                    setIsAddOpen(false);
+                    setNewStudent({ nim: "", name: "", email: "" });
                     refetch();
                },
                {
-                    loading: 'Menghapus data...',
-                    success: 'Data mahasiswa berhasil dihapus (Soft Delete)',
-                    error: 'Gagal menghapus data'
+                    loading: 'Menambahkan mahasiswa...',
+                    success: 'Mahasiswa berhasil ditambahkan',
+                    error: (err) => `Gagal: ${err.response?.data?.message || "Error"}`
                }
           );
      };
 
+     // Action Handlers
+     const handleDeleteStudent = (student: any) => {
+          setActionDialog({ isOpen: true, type: 'delete', data: student });
+     };
+
+     const handleRestore = (student: any) => {
+          setActionDialog({ isOpen: true, type: 'restore', data: student });
+     };
+
+     const handlePermanentDelete = (student: any) => {
+          setActionDialog({ isOpen: true, type: 'permanent', data: student });
+     };
+
+     // Confirm Action Execution
+     const confirmAction = async () => {
+          const { type, data } = actionDialog;
+          if (!data) return;
+
+          setActionDialog(prev => ({ ...prev, isOpen: false }));
+
+          if (type === 'delete') {
+               toast.promise(
+                    async () => {
+                         await api.delete(`/students/${data.id}`);
+                         refetch();
+                    },
+                    {
+                         loading: 'Menghapus data...',
+                         success: 'Data mahasiswa berhasil dihapus (Soft Delete)',
+                         error: 'Gagal menghapus data'
+                    }
+               );
+          } else if (type === 'restore') {
+               toast.promise(
+                    async () => {
+                         await api.post(`/students/${data.id}/restore`);
+                         refetch();
+                    },
+                    {
+                         loading: 'Memulihkan data...',
+                         success: 'Data mahasiswa berhasil dipulihkan',
+                         error: 'Gagal memulihkan data'
+                    }
+               );
+          } else if (type === 'permanent') {
+               toast.promise(
+                    async () => {
+                         await api.delete(`/students/${data.id}/permanent`);
+                         refetch();
+                    },
+                    {
+                         loading: 'Menghapus permanen...',
+                         success: 'Data mahasiswa dihapus permanen',
+                         error: 'Gagal menghapus permanen'
+                    }
+               );
+          }
+     };
+
      const students = data?.data || [];
      const isSuperAdmin = user?.role === 'super_admin';
+
+     const getCooldownRemaining = (nim: string) => {
+          const expiry = cooldowns[nim];
+          if (!expiry) return 0;
+          return Math.max(0, Math.ceil((expiry - now) / 1000));
+     };
 
      return (
           <div className="space-y-6">
@@ -75,25 +201,42 @@ export default function StudentsPage() {
                          <h2 className="text-3xl font-bold tracking-tight">Mahasiswa</h2>
                          <p className="text-muted-foreground text-sm">Kelola data pemilih dan monitor status voting.</p>
                     </div>
-                    <Button onClick={() => setIsImportOpen(true)} className="gap-2">
-                         <FileUp className="h-4 w-4" />
-                         Import Excel
-                    </Button>
+                    <div className="flex gap-2">
+                         <Button onClick={() => setIsAddOpen(true)} className="gap-2" variant="outline">
+                              <Plus className="h-4 w-4" />
+                              Tambah Manual
+                         </Button>
+                         <Button onClick={() => setIsImportOpen(true)} className="gap-2">
+                              <FileUp className="h-4 w-4" />
+                              Import Excel
+                         </Button>
+                    </div>
                </div>
 
-               <div className="flex items-center gap-2 max-w-sm">
-                    <div className="relative flex-1">
-                         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                         <Input
-                              placeholder="Cari nama atau NIM..."
-                              className="pl-8"
-                              value={search}
-                              onChange={(e) => setSearch(e.target.value)}
-                         />
+               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 justify-between">
+                    <div className="flex items-center gap-2 max-w-sm w-full">
+                         <div className="relative flex-1">
+                              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                   placeholder="Cari nama atau NIM..."
+                                   className="pl-8"
+                                   value={search}
+                                   onChange={(e) => setSearch(e.target.value)}
+                              />
+                         </div>
+                         <Button variant="outline" size="icon" onClick={() => refetch()}>
+                              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                         </Button>
                     </div>
-                    <Button variant="outline" size="icon" onClick={() => refetch()}>
-                         <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-                    </Button>
+
+                    <div className="flex items-center space-x-2">
+                         <Switch
+                              id="show-deleted"
+                              checked={showDeleted}
+                              onCheckedChange={setShowDeleted}
+                         />
+                         <Label htmlFor="show-deleted">Tampilkan Dihapus</Label>
+                    </div>
                </div>
 
                <div className="border rounded-lg bg-card overflow-x-auto">
@@ -103,68 +246,223 @@ export default function StudentsPage() {
                                    <TableHead>NIM</TableHead>
                                    <TableHead>Nama</TableHead>
                                    <TableHead>Email</TableHead>
-                                   <TableHead>Status</TableHead>
+                                   <TableHead>Status Voters</TableHead>
                                    <TableHead className="text-right">Aksi</TableHead>
                               </TableRow>
                          </TableHeader>
                          <TableBody>
-                              {students.map((student: any) => (
-                                   <TableRow key={student.id}>
-                                        <TableCell className="font-medium">{student.nim}</TableCell>
-                                        <TableCell>{student.name}</TableCell>
-                                        <TableCell>{student.email}</TableCell>
-                                        <TableCell>
-                                             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${student.hasVoted
-                                                  ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                                                  : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400"
-                                                  }`}>
-                                                  {student.hasVoted ? "Sudah Memilih" : "Belum Memilih"}
-                                             </span>
-                                        </TableCell>
-                                        <TableCell className="text-right">
-                                             <div className="flex items-center justify-end gap-1">
-                                                  {!student.hasVoted && (
-                                                       <Button
-                                                            size="sm"
-                                                            variant="ghost"
-                                                            className="h-8 w-8 p-0"
-                                                            onClick={() => handleResendOtp(student.nim)}
-                                                            title="Kirim Ulang OTP"
-                                                       >
-                                                            <Mail className="h-4 w-4" />
-                                                       </Button>
-                                                  )}
-                                                  {!student.hasVoted && (
-                                                       <Button
-                                                            size="sm"
-                                                            variant="ghost"
-                                                            className="h-8 w-8 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
-                                                            onClick={() => handleMarkAttendance(student.nim)}
-                                                            title="Tandai Hadir (Offline)"
-                                                       >
-                                                            <CheckCircle2 className="h-4 w-4" />
-                                                       </Button>
-                                                  )}
-                                                  {isSuperAdmin && (
-                                                       <Button
-                                                            size="sm"
-                                                            variant="ghost"
-                                                            className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                                            onClick={() => handleDeleteStudent(student.id, student.name)}
-                                                            title="Hapus Data (Soft Delete)"
-                                                       >
-                                                            <Trash2 className="h-4 w-4" />
-                                                       </Button>
-                                                  )}
-                                             </div>
-                                        </TableCell>
-                                   </TableRow>
-                              ))}
+                              {isLoading ? (
+                                   Array.from({ length: 10 }).map((_, i) => (
+                                        <TableRow key={i}>
+                                             <TableCell><Skeleton className="h-4 w-[100px]" /></TableCell>
+                                             <TableCell><Skeleton className="h-4 w-[200px]" /></TableCell>
+                                             <TableCell><Skeleton className="h-4 w-[250px]" /></TableCell>
+                                             <TableCell><Skeleton className="h-6 w-[120px] rounded-full" /></TableCell>
+                                             <TableCell className="text-right">
+                                                  <div className="flex justify-end gap-1">
+                                                       <Skeleton className="h-8 w-8 rounded-md" />
+                                                       <Skeleton className="h-8 w-8 rounded-md" />
+                                                       <Skeleton className="h-8 w-8 rounded-md" />
+                                                  </div>
+                                             </TableCell>
+                                        </TableRow>
+                                   ))
+                              ) : (
+                                   students.map((student: any) => {
+                                        const isDeleted = !!student.deletedAt;
+                                        const cooldown = getCooldownRemaining(student.nim);
+
+                                        return (
+                                             <TableRow key={student.id} className={isDeleted ? "opacity-50 bg-destructive/5 hover:bg-destructive/10" : ""}>
+                                                  <TableCell className="font-medium">
+                                                       {student.nim}
+                                                       {isDeleted && <span className="ml-2 text-[10px] text-destructive border border-destructive px-1 rounded">DELETED</span>}
+                                                  </TableCell>
+                                                  <TableCell>{student.name}</TableCell>
+                                                  <TableCell>{student.email}</TableCell>
+                                                  <TableCell>
+                                                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${student.hasVoted
+                                                            ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                                                            : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400"
+                                                            }`}>
+                                                            {student.hasVoted ? "Sudah Memilih" : "Belum Memilih"}
+                                                       </span>
+                                                  </TableCell>
+                                                  <TableCell className="text-right">
+                                                       <div className="flex items-center justify-end gap-1">
+                                                            {!student.hasVoted && !isDeleted && (
+                                                                 <Button
+                                                                      size="sm"
+                                                                      variant="ghost"
+                                                                      className="h-8 w-8 p-0"
+                                                                      onClick={() => handleResendOtpClick(student)}
+                                                                      disabled={cooldown > 0}
+                                                                      title={cooldown > 0 ? `Tunggu ${cooldown}d` : "Kirim Ulang OTP"}
+                                                                 >
+                                                                      {cooldown > 0 ? (
+                                                                           <span className="text-xs font-mono">{cooldown}s</span>
+                                                                      ) : (
+                                                                           <Mail className="h-4 w-4" />
+                                                                      )}
+                                                                 </Button>
+                                                            )}
+                                                            {!student.hasVoted && !isDeleted && (
+                                                                 <Button
+                                                                      size="sm"
+                                                                      variant="ghost"
+                                                                      className="h-8 w-8 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+                                                                      onClick={() => handleMarkAttendance(student.nim)}
+                                                                      title="Tandai Hadir (Offline)"
+                                                                 >
+                                                                      <CheckCircle2 className="h-4 w-4" />
+                                                                 </Button>
+                                                            )}
+                                                            {isSuperAdmin && !isDeleted && (
+                                                                 <Button
+                                                                      size="sm"
+                                                                      variant="ghost"
+                                                                      className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                                      onClick={() => handleDeleteStudent(student)}
+                                                                      title="Hapus Data (Soft Delete)"
+                                                                 >
+                                                                      <Trash2 className="h-4 w-4" />
+                                                                 </Button>
+                                                            )}
+                                                            {isSuperAdmin && isDeleted && (
+                                                                 <>
+                                                                      <Button
+                                                                           size="sm"
+                                                                           variant="ghost"
+                                                                           className="h-8 w-8 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                                                           onClick={() => handleRestore(student)}
+                                                                           title="Pulihkan Data (Restore)"
+                                                                      >
+                                                                           <Undo2 className="h-4 w-4" />
+                                                                      </Button>
+                                                                      <Button
+                                                                           size="sm"
+                                                                           variant="ghost"
+                                                                           className="h-8 w-8 p-0 text-red-700 hover:text-red-800 hover:bg-red-100"
+                                                                           onClick={() => handlePermanentDelete(student)}
+                                                                           title="Hapus Permanen"
+                                                                      >
+                                                                           <XCircle className="h-4 w-4" />
+                                                                      </Button>
+                                                                 </>
+                                                            )}
+                                                       </div>
+                                                  </TableCell>
+                                             </TableRow>
+                                        );
+                                   })
+                              )}
                          </TableBody>
                     </Table>
                </div>
 
                <ImportModal open={isImportOpen} onOpenChange={setIsImportOpen} />
+
+               {/* OTP Confirmation Dialog */}
+               <AlertDialog open={otpConfirmOpen} onOpenChange={setOtpConfirmOpen}>
+                    <AlertDialogContent>
+                         <AlertDialogHeader>
+                              <AlertDialogTitle>Kirim Ulang OTP?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                   Apakah Anda yakin ingin mengirim ulang OTP kepada <strong>{selectedStudentForOtp?.name}</strong> ({selectedStudentForOtp?.email})?
+                                   <br /><br />
+                                   Pastikan mahasiswa tersebut benar-benar membutuhkan OTP baru. Gunakan fitur ini dengan bijak untuk menghindari spam.
+                              </AlertDialogDescription>
+                         </AlertDialogHeader>
+                         <AlertDialogFooter>
+                              <AlertDialogCancel>Batal</AlertDialogCancel>
+                              <AlertDialogAction onClick={confirmResendOtp}>Ya, Kirim OTP</AlertDialogAction>
+                         </AlertDialogFooter>
+                    </AlertDialogContent>
+               </AlertDialog>
+
+               {/* Action Confirmation Dialog (Delete/Restore/Permanent) */}
+               <AlertDialog open={actionDialog.isOpen} onOpenChange={(open) => setActionDialog(prev => ({ ...prev, isOpen: open }))}>
+                    <AlertDialogContent>
+                         <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                   {actionDialog.type === 'delete' && "Hapus Mahasiswa (Soft Delete)?"}
+                                   {actionDialog.type === 'restore' && "Pulihkan Mahasiswa?"}
+                                   {actionDialog.type === 'permanent' && "Hapus Permanen?"}
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                   {actionDialog.type === 'delete' && (
+                                        <>
+                                             Anda akan menghapus data <strong>{actionDialog.data?.name}</strong> secara sementara. Data masih dapat dipulihkan oleh Super Admin.
+                                        </>
+                                   )}
+                                   {actionDialog.type === 'restore' && (
+                                        <>
+                                             Anda akan memulihkan data <strong>{actionDialog.data?.name}</strong>. Data akan kembali muncul di daftar aktif.
+                                        </>
+                                   )}
+                                   {actionDialog.type === 'permanent' && (
+                                        <>
+                                             <span className="text-destructive font-bold">PERINGATAN KERAS!</span><br />
+                                             Tindakan ini akan menghapus data <strong>{actionDialog.data?.name}</strong> secara permanen dari database. Tindakan ini <strong>TIDAK DAPAT DIBATALKAN</strong>.
+                                        </>
+                                   )}
+                              </AlertDialogDescription>
+                         </AlertDialogHeader>
+                         <AlertDialogFooter>
+                              <AlertDialogCancel>Batal</AlertDialogCancel>
+                              <AlertDialogAction
+                                   onClick={confirmAction}
+                                   className={actionDialog.type === 'permanent' || actionDialog.type === 'delete' ? "bg-destructive hover:bg-destructive/90" : ""}
+                              >
+                                   {actionDialog.type === 'delete' && "Ya, Hapus Sementara"}
+                                   {actionDialog.type === 'restore' && "Ya, Pulihkan"}
+                                   {actionDialog.type === 'permanent' && "Ya, Hapus Permanen"}
+                              </AlertDialogAction>
+                         </AlertDialogFooter>
+                    </AlertDialogContent>
+               </AlertDialog>
+
+               {/* Add Manual Student Dialog */}
+               <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+                    <DialogContent>
+                         <DialogHeader>
+                              <DialogTitle>Tambah Mahasiswa Manual</DialogTitle>
+                         </DialogHeader>
+                         <div className="space-y-4 py-2">
+                              <div className="space-y-2">
+                                   <Label htmlFor="nim">NIM <span className="text-red-500">*</span></Label>
+                                   <Input
+                                        id="nim"
+                                        placeholder="Contoh: 0110221001"
+                                        value={newStudent.nim}
+                                        onChange={(e) => setNewStudent({ ...newStudent, nim: e.target.value })}
+                                   />
+                              </div>
+                              <div className="space-y-2">
+                                   <Label htmlFor="name">Nama Lengkap <span className="text-red-500">*</span></Label>
+                                   <Input
+                                        id="name"
+                                        placeholder="Nama mahasiswa..."
+                                        value={newStudent.name}
+                                        onChange={(e) => setNewStudent({ ...newStudent, name: e.target.value })}
+                                   />
+                              </div>
+                              <div className="space-y-2">
+                                   <Label htmlFor="email">Email (Opsional)</Label>
+                                   <Input
+                                        id="email"
+                                        placeholder="Email..."
+                                        value={newStudent.email}
+                                        onChange={(e) => setNewStudent({ ...newStudent, email: e.target.value })}
+                                   />
+                              </div>
+                              <div className="flex justify-end gap-2 pt-4">
+                                   <Button variant="outline" onClick={() => setIsAddOpen(false)}>Batal</Button>
+                                   <Button onClick={handleAddStudent}>Simpan</Button>
+                              </div>
+                         </div>
+                    </DialogContent>
+               </Dialog>
           </div>
      );
 }
